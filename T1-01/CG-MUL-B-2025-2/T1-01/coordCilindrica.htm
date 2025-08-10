@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Orbitación alrededor del eje Y — Coordenadas cilíndricas</title>
+<style>
+    body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial; background:#f0f4f8;margin:0;padding:2rem;display:flex;justify-content:center;align-items:flex-start;min-height:100vh}
+    .container{width:100%;max-width:900px;background:#fff;border-radius:12px;padding:24px;box-shadow:0 10px 20px rgba(0,0,0,.06)}
+    h1{margin:0 0 12px;font-size:1.6rem;text-align:center;color:#111827}
+    .form-card{background:#f9fafb;padding:12px;border-radius:8px;margin-bottom:12px}
+    .form-group{display:flex;flex-direction:column;margin-bottom:8px}
+    label{font-weight:600;color:#374151;margin-bottom:6px;font-size:0.95rem}
+    input[type=number]{padding:8px;border-radius:6px;border:1px solid #d1d5db;font-size:1rem}
+    button{padding:10px 14px;border-radius:8px;border:0;background:#3b82f6;color:#fff;font-weight:600;cursor:pointer}
+    #threeJsContainer{height:520px;border-radius:8px;background:#e2e8f0;position:relative;overflow:hidden}
+    .label{position:absolute;pointer-events:none;background:rgba(255,255,255,.8);padding:3px 6px;border-radius:4px;font-size:12px;transform:translate(-50%,-50%)}
+    .reset-button{background:#ef4444;color:#fff;padding:8px 12px;border-radius:8px;border:0;cursor:pointer;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>Visualizador: puntos orbitando alrededor del eje Y</h1>
+
+    <div class="form-card">
+        <form id="cylindricalForm">
+            <div class="form-group">
+                <label for="cylindricalR">Radio (r) — coordenada cilíndrica</label>
+                <input id="cylindricalR" type="number" value="50" step="0.1" required>
+            </div>
+            <div class="form-group">
+                <label for="cylindricalTheta">Ángulo θ (grados)</label>
+                <input id="cylindricalTheta" type="number" value="45" step="0.1" required>
+            </div>
+            <div class="form-group">
+                <label for="cylindricalZ">Altura (z → esta será la coordenada Y en Three.js)</label>
+                <input id="cylindricalZ" type="number" value="30" step="0.1" required>
+            </div>
+
+            <hr />
+
+            <div class="form-group">
+                <label for="numOrbitPoints">Número de puntos en la circunferencia</label>
+                <input id="numOrbitPoints" type="number" value="24" min="3" step="1">
+            </div>
+            <div class="form-group">
+                <label for="extraRadius">Radio adicional (opcional). Si 0 → se usa exactamente la distancia del punto al eje Y</label>
+                <input id="extraRadius" type="number" value="0" step="0.1" min="0">
+            </div>
+            <div class="form-group">
+                <label for="orbitSpeed">Velocidad de giro (0 = estático)</label>
+                <input id="orbitSpeed" type="number" value="0.6" step="0.05" min="0">
+            </div>
+
+            <div style="display:flex;gap:8px;margin-top:8px">
+                <button type="submit">Generar</button>
+                <button id="clearSceneButton" type="button" class="reset-button">Limpiar</button>
+            </div>
+        </form>
+    </div>
+
+    <div id="threeJsContainer"></div>
+</div>
+
+<!-- Three.js r128 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const container = document.getElementById('threeJsContainer');
+
+    let scene, camera, renderer, controls;
+    let visObjects = [];     // elementos para limpiar
+    let labels = [];         // {el:div, pos:THREE.Vector3}
+    let orbitData = [];      // {group, speed} — grupos que rotan alrededor del eje Y global
+
+    // Inicializar Three.js
+    function init() {
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xe2e8f0);
+
+        camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 2000);
+        camera.position.set(200, 150, 200);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        container.appendChild(renderer.domElement);
+
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.25;
+
+        const amb = new THREE.AmbientLight(0xaaaaaa, 0.8);
+        scene.add(amb);
+
+        const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+        dir.position.set(1, 2, 1);
+        scene.add(dir);
+
+        const axes = new THREE.AxesHelper(100);
+        scene.add(axes); visObjects.push(axes);
+
+        const grid = new THREE.GridHelper(400, 40);
+        grid.material.opacity = 0.2;
+        grid.material.transparent = true;
+        scene.add(grid); visObjects.push(grid);
+
+        animate();
+    }
+
+    // Animación: rota cada grupo alrededor de Y
+    function animate() {
+        requestAnimationFrame(animate);
+
+        // rotar cada grupo (rotación alrededor del eje Y global se logra rotando el grupo con origen en (0,0,0))
+        orbitData.forEach(data => {
+            if (!data || !data.group) return;
+            data.group.rotation.y += data.speed * 0.01; // factor de ajuste
+        });
+
+        controls.update();
+        renderer.render(scene, camera);
+        updateLabels();
+    }
+
+    // convierte grados → radianes
+    const toRad = deg => deg * Math.PI / 180;
+
+    // crear etiqueta html para una posición 3D
+    function createLabel(posVec3, text, color = '#111') {
+        const div = document.createElement('div');
+        div.className = 'label';
+        div.style.color = color;
+        div.textContent = text;
+        container.appendChild(div);
+        labels.push({ el: div, pos: posVec3.clone() }); // clonamos posición
+        updateLabel(labels.length - 1);
+        return div;
+    }
+
+    // actualizar posición de una etiqueta por índice
+    function updateLabel(i) {
+        const item = labels[i];
+        if (!item) return;
+        const v = item.pos.clone();
+        v.project(camera);
+        const x = (v.x * 0.5 + 0.5) * container.clientWidth;
+        const y = (-v.y * 0.5 + 0.5) * container.clientHeight;
+        item.el.style.left = `${x}px`;
+        item.el.style.top = `${y}px`;
+    }
+
+    function updateLabels() {
+        for (let i = 0; i < labels.length; i++) updateLabel(i);
+    }
+
+    // Limpiar escena (elementos, grupos, etiquetas)
+    function clearScene() {
+        // quitar visObjects
+        visObjects.forEach(obj => {
+            try {
+                scene.remove(obj);
+                if (obj.geometry) obj.geometry.dispose();
+                if (obj.material) {
+                    if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+                    else obj.material.dispose();
+                }
+            } catch (e) { console.warn(e); }
+        });
+        visObjects = [];
+
+        // quitar orbitData grupos
+        orbitData.forEach(d => { try { scene.remove(d.group); } catch (e) {} });
+        orbitData = [];
+
+        // quitar etiquetas
+        labels.forEach(l => { try { l.el.remove(); } catch (e) {} });
+        labels = [];
+
+        // reañadir ejes y grid por seguridad
+        const axes = new THREE.AxesHelper(100);
+        scene.add(axes); visObjects.push(axes);
+        const grid = new THREE.GridHelper(400, 40);
+        grid.material.opacity = 0.2; grid.material.transparent = true;
+        scene.add(grid); visObjects.push(grid);
+    }
+
+    /**
+     * Dibuja el punto principal P y (opcionalmente) crea una circunferencia de puntos
+     * que giran alrededor del eje Y global. 
+     * Importante: la conversión cilíndrica usada es:
+     *   x = r * cos(theta), z = r * sin(theta), y = altura (z input)
+     */
+    function drawAndOrbit(rInput, thetaDeg, height, numPoints = 0, extraRadius = 0, speed = 0) {
+        clearScene();
+
+        // conversion cilíndrica → cartesiano (convención Y = altura)
+        const thetaRad = toRad(thetaDeg);
+        const x = rInput * Math.cos(thetaRad);
+        const z = rInput * Math.sin(thetaRad);
+        const y = height; // altura en Y
+
+        // Punto principal P
+        const geomP = new THREE.SphereGeometry(3.5, 24, 24);
+        const matP = new THREE.MeshStandardMaterial({ color: 0x3b82f6 });
+        const meshP = new THREE.Mesh(geomP, matP);
+        meshP.position.set(x, y, z);
+        scene.add(meshP);
+        visObjects.push(meshP);
+        createLabel(new THREE.Vector3(x, y, z), `P(${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)})`);
+
+        // calcular radio respecto al eje Y (distancia al eje Y en plano XZ)
+        const radiusFromY = Math.sqrt(x * x + z * z);
+        // usar extraRadius si se indicó (>0)
+        const finalRadius = (extraRadius > 0) ? extraRadius : radiusFromY;
+
+        // añadir etiqueta con radio usado
+        createLabel(new THREE.Vector3(0, y, 0), `radio = ${finalRadius.toFixed(2)} (medido desde eje Y)`, '#ef4444');
+
+        // si se pidió circunferencia:
+        if (numPoints > 0) {
+            // Creamos un grupo en el origen (0,0,0) para que al rotar el grupo gire alrededor del eje Y global
+            const group = new THREE.Group();
+            group.position.set(0, 0, 0); // origen global -> rotación alrededor del eje Y global
+
+            // Ángulo base = dirección radial del punto P (para alinear el primer punto con P)
+            const baseAngle = Math.atan2(z, x); // atan2(z, x) porque usamos X (x) y Z (z)
+
+            for (let i = 0; i < numPoints; i++) {
+                const angle = baseAngle + (i / numPoints) * Math.PI * 2;
+                // posicion en XZ a distancia finalRadius del eje Y
+                const px = finalRadius * Math.cos(angle);
+                const pz = finalRadius * Math.sin(angle);
+                const py = y; // misma altura que P (mantener Y)
+
+                const g = new THREE.SphereGeometry(1.6, 12, 12);
+                const m = new THREE.MeshStandardMaterial({ color: 0xffd166 });
+                const dot = new THREE.Mesh(g, m);
+                dot.position.set(px, py, pz);
+                group.add(dot);
+            }
+
+            // añadir grupo y guardar para animar
+            scene.add(group);
+            orbitData.push({ group: group, speed: parseFloat(speed) || 0 });
+            // guardar grupo en visObjects para limpieza
+            visObjects.push(group);
+        }
+
+        // centrar cámara / controles en P (opcional)
+        controls.target.set(x, y, z);
+        controls.update();
+    }
+
+    // manejar resize
+    window.addEventListener('resize', () => {
+        if (!camera || !renderer) return;
+        camera.aspect = container.clientWidth / container.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(container.clientWidth, container.clientHeight);
+    });
+
+    // init
+    init();
+
+    // formulario
+    document.getElementById('cylindricalForm').addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        const r = parseFloat(document.getElementById('cylindricalR').value);
+        const theta = parseFloat(document.getElementById('cylindricalTheta').value);
+        const h = parseFloat(document.getElementById('cylindricalZ').value);
+        const n = parseInt(document.getElementById('numOrbitPoints').value) || 0;
+        const extra = parseFloat(document.getElementById('extraRadius').value) || 0;
+        const sp = parseFloat(document.getElementById('orbitSpeed').value) || 0;
+
+        drawAndOrbit(r, theta, h, n, extra, sp);
+    });
+
+    document.getElementById('clearSceneButton').addEventListener('click', () => clearScene());
+});
+</script>
+</body>
+</html>
